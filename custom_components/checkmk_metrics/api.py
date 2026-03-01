@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -364,18 +365,25 @@ class CheckmkApiClient:
                             if isinstance(v, str) and v.strip():
                                 names.add(v.strip())
 
-            perf_map = mapping.get("performance_data")
-            if isinstance(perf_map, dict):
-                for key in perf_map:
-                    if isinstance(key, str) and key.strip():
-                        names.add(key.strip())
+            for perf_map_key in ("performance_data", "service_performance_data"):
+                perf_map = mapping.get(perf_map_key)
+                if isinstance(perf_map, dict):
+                    for key in perf_map:
+                        if isinstance(key, str) and key.strip():
+                            names.add(key.strip())
 
-            perf_raw = mapping.get("perf_data")
-            if isinstance(perf_raw, str):
-                for part in perf_raw.split():
-                    key = part.split("=", 1)[0].strip()
-                    if key:
-                        names.add(key)
+            for perf_raw_key in ("perf_data", "service_perf_data"):
+                perf_raw = mapping.get(perf_raw_key)
+                if isinstance(perf_raw, str):
+                    for part in perf_raw.split():
+                        key = part.split("=", 1)[0].strip()
+                        if key:
+                            names.add(key)
+
+            for output_key in ("plugin_output", "service_plugin_output"):
+                output = mapping.get(output_key)
+                if isinstance(output, str):
+                    names.update(CheckmkApiClient._extract_metric_labels_from_output(output))
 
         if isinstance(data, dict):
             add_from_mapping(data)
@@ -419,30 +427,49 @@ class CheckmkApiClient:
         if isinstance(container, dict):
             if metric_name in container and isinstance(container[metric_name], (int, float)):
                 return MetricResult(float(container[metric_name]), None, container)
+            # Case-insensitive direct key lookup.
+            for key, value in container.items():
+                if (
+                    isinstance(key, str)
+                    and key.strip().lower() == metric_name.strip().lower()
+                    and isinstance(value, (int, float))
+                ):
+                    return MetricResult(float(value), None, container)
 
-            perf_map = container.get("performance_data")
-            if isinstance(perf_map, dict) and metric_name in perf_map:
-                metric_value = perf_map.get(metric_name)
-                if isinstance(metric_value, (int, float)):
-                    return MetricResult(float(metric_value), None, container)
-                if isinstance(metric_value, dict):
-                    for key in ("value", "current", "last"):
-                        value = metric_value.get(key)
-                        if isinstance(value, (int, float)):
-                            unit = (
-                                metric_value.get("unit")
-                                if isinstance(metric_value.get("unit"), str)
-                                else None
-                            )
-                            return MetricResult(float(value), unit, metric_value)
+            for perf_map_key in ("performance_data", "service_performance_data"):
+                perf_map = container.get(perf_map_key)
+                if isinstance(perf_map, dict) and metric_name in perf_map:
+                    metric_value = perf_map.get(metric_name)
+                    if isinstance(metric_value, (int, float)):
+                        return MetricResult(float(metric_value), None, container)
+                    if isinstance(metric_value, dict):
+                        for key in ("value", "current", "last"):
+                            value = metric_value.get(key)
+                            if isinstance(value, (int, float)):
+                                unit = (
+                                    metric_value.get("unit")
+                                    if isinstance(metric_value.get("unit"), str)
+                                    else None
+                                )
+                                return MetricResult(float(value), unit, metric_value)
 
-            perf_raw = container.get("perf_data")
-            if isinstance(perf_raw, str):
-                parsed = CheckmkApiClient._extract_from_perf_data_string(
-                    perf_raw, metric_name
-                )
-                if parsed is not None:
-                    return parsed
+            for perf_raw_key in ("perf_data", "service_perf_data"):
+                perf_raw = container.get(perf_raw_key)
+                if isinstance(perf_raw, str):
+                    parsed = CheckmkApiClient._extract_from_perf_data_string(
+                        perf_raw, metric_name
+                    )
+                    if parsed is not None:
+                        return parsed
+
+            for output_key in ("plugin_output", "service_plugin_output"):
+                output = container.get(output_key)
+                if isinstance(output, str):
+                    parsed = CheckmkApiClient._extract_from_plugin_output(
+                        output, metric_name
+                    )
+                    if parsed is not None:
+                        return parsed
 
             for key in ("value", "metric_value", "current", "last"):
                 value = container.get(key)
@@ -486,12 +513,12 @@ class CheckmkApiClient:
         metric_name: str,
     ) -> MetricResult | None:
         """Parse perf_data like 'temp=48.1;80;90;0;100'."""
+        parsed_candidates: list[MetricResult] = []
         for chunk in perf_data.split():
             if "=" not in chunk:
                 continue
             name, raw_value = chunk.split("=", 1)
-            if name.strip() != metric_name:
-                continue
+            name_clean = name.strip()
 
             value_part = raw_value.split(";", 1)[0].strip()
             numeric = ""
@@ -505,8 +532,67 @@ class CheckmkApiClient:
             try:
                 value = float(numeric)
             except ValueError:
-                return None
+                continue
 
-            return MetricResult(value=value, unit=unit or None, raw={"perf_data": chunk})
+            result = MetricResult(value=value, unit=unit or None, raw={"perf_data": chunk})
+            parsed_candidates.append(result)
 
+            metric_lower = metric_name.strip().lower()
+            name_lower = name_clean.lower()
+            if (
+                name_lower == metric_lower
+                or name_lower.startswith(metric_lower)
+                or metric_lower.startswith(name_lower)
+            ):
+                return result
+
+        # If this service exposes only one metric, use it as fallback.
+        if len(parsed_candidates) == 1:
+            return parsed_candidates[0]
+        return None
+
+    @staticmethod
+    def _extract_metric_labels_from_output(output: str) -> set[str]:
+        """Extract labels from output like 'Temperature: 49.9 °C'."""
+        labels: set[str] = set()
+        for line in output.splitlines():
+            match = re.match(r"^\s*([A-Za-z0-9 _./-]+)\s*:\s*[-+]?\d", line)
+            if match:
+                label = match.group(1).strip()
+                if label:
+                    labels.add(label)
+        return labels
+
+    @staticmethod
+    def _extract_from_plugin_output(output: str, metric_name: str) -> MetricResult | None:
+        """Parse values from plugin output lines like 'Temperature: 49.9 °C'."""
+        metric_lower = metric_name.strip().lower()
+        pattern = re.compile(
+            r"^\s*([A-Za-z0-9 _./-]+)\s*:\s*([-+]?\d+(?:\.\d+)?)\s*([^\s]*)"
+        )
+        parsed_candidates: list[MetricResult] = []
+        for line in output.splitlines():
+            match = pattern.match(line)
+            if not match:
+                continue
+
+            label, number, unit = match.group(1).strip(), match.group(2), match.group(3).strip()
+            label_lower = label.lower()
+
+            try:
+                value = float(number)
+            except ValueError:
+                continue
+
+            result = MetricResult(value=value, unit=unit or None, raw={"plugin_output": line})
+            parsed_candidates.append(result)
+            if (
+                label_lower == metric_lower
+                or label_lower.startswith(metric_lower)
+                or metric_lower.startswith(label_lower)
+            ):
+                return result
+
+        if len(parsed_candidates) == 1:
+            return parsed_candidates[0]
         return None

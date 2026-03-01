@@ -87,6 +87,8 @@ class CheckmkMetricSensor(CoordinatorEntity[CheckmkMetricsCoordinator], SensorEn
             "service": self._metric["service"],
             "metric": self._metric["metric"],
         }
+        if self._metric["metric"] == "__service_value__":
+            attrs["metric_mode"] = "service_value_auto"
 
         if "error" in current:
             attrs["api_error"] = current["error"]

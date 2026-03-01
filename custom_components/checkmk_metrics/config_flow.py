@@ -33,6 +33,7 @@ FIELD_SERVICE = "service"
 FIELD_METRIC_CHOICES = "metric_choices"
 FIELD_METRICS_MANUAL = "metrics_manual"
 FIELD_ADD_MORE = "add_more"
+SERVICE_VALUE_METRIC = "__service_value__"
 
 
 def _make_metric_id(host: str, service: str, metric: str) -> str:
@@ -290,7 +291,21 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             deduped = sorted(set([s.strip() for s in selected if s.strip()]), key=str.casefold)
             if not deduped:
-                errors["base"] = "no_metrics_selected"
+                # No explicit metric selected: create a generic "service value" sensor.
+                metric = {
+                    "id": _make_metric_id(
+                        self._current_host,
+                        self._current_service,
+                        SERVICE_VALUE_METRIC,
+                    ),
+                    "host": self._current_host,
+                    "service": self._current_service,
+                    "metric": SERVICE_VALUE_METRIC,
+                    "name": f"{self._current_host} {self._current_service}",
+                    "unit": "",
+                }
+                if metric["id"] not in {m["id"] for m in self._selected_metrics}:
+                    self._selected_metrics.append(metric)
             else:
                 for metric_name in deduped:
                     metric = {
@@ -308,10 +323,10 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if metric["id"] not in {m["id"] for m in self._selected_metrics}:
                         self._selected_metrics.append(metric)
 
-                if user_input.get(FIELD_ADD_MORE, False):
-                    return await self.async_step_select_host()
+            if user_input.get(FIELD_ADD_MORE, False):
+                return await self.async_step_select_host()
 
-                return self._create_final_entry()
+            return self._create_final_entry()
 
         metric_options = self._metric_candidates or []
         metrics_selector = selector.SelectSelector(

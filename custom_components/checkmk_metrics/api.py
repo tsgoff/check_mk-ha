@@ -189,6 +189,15 @@ class CheckmkApiClient:
         metric: str,
     ) -> MetricResult:
         """Fetch a single metric by trying a few payload variants."""
+        if metric == "__service_value__":
+            snapshot = await self._get_service_snapshot(host, service)
+            parsed = self._extract_first_numeric(snapshot)
+            if parsed is not None:
+                return parsed
+            raise CheckmkApiError(
+                f"No numeric service value found for {host}/{service}."
+            )
+
         payload_variants = [
             {
                 "host_name": host,
@@ -595,4 +604,52 @@ class CheckmkApiClient:
 
         if len(parsed_candidates) == 1:
             return parsed_candidates[0]
+        return None
+
+    @staticmethod
+    def _extract_first_numeric(data: Any) -> MetricResult | None:
+        """Best-effort fallback: return first numeric metric found in snapshot."""
+        if isinstance(data, dict):
+            for key in (
+                "service_performance_data",
+                "performance_data",
+                "extensions",
+                "members",
+                "value",
+                "result",
+                "data",
+            ):
+                part = data.get(key)
+                result = CheckmkApiClient._extract_first_numeric(part)
+                if result is not None:
+                    return result
+
+            for output_key in ("service_plugin_output", "plugin_output"):
+                output = data.get(output_key)
+                if isinstance(output, str):
+                    for line in output.splitlines():
+                        match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*([^\s]*)", line)
+                        if not match:
+                            continue
+                        try:
+                            value = float(match.group(1))
+                        except ValueError:
+                            continue
+                        unit = match.group(2).strip() or None
+                        return MetricResult(value=value, unit=unit, raw={"plugin_output": line})
+
+            for value in data.values():
+                result = CheckmkApiClient._extract_first_numeric(value)
+                if result is not None:
+                    return result
+
+        if isinstance(data, list):
+            for item in data:
+                result = CheckmkApiClient._extract_first_numeric(item)
+                if result is not None:
+                    return result
+
+        if isinstance(data, (int, float)):
+            return MetricResult(float(data), None, data)
+
         return None

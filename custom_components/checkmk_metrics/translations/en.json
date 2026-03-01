@@ -30,7 +30,7 @@
       },
       "select_metrics": {
         "title": "Select metrics",
-        "description": "Host: {host}\nService: {service}\nDiscovered metrics: {discovered}\nAlready selected: {selected_count}\n\nYou can also enter metric names manually as CSV.",
+        "description": "Host: {host}\nService: {service}\nDiscovered metrics: {discovered}\nAlready selected: {selected_count}\n\nMetric selection is optional. If empty, Home Assistant will use the service's main numeric value automatically.\nYou can also enter metric names manually as CSV.",
         "data": {
           "metric_choices": "Discovered metrics",
           "metrics_manual": "Additional metrics (CSV)",

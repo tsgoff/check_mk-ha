@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Checkmk Metrics",
+        "title": "check_mk Metrics",
         "description": "Verbinde dich mit deiner Checkmk API.",
         "data": {
           "name": "Name",
@@ -52,7 +52,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Checkmk Metrics Optionen",
+        "title": "check_mk Metrics Optionen",
         "description": "Intervall und Metrik-Liste anpassen (Textformat)",
         "data": {
           "scan_interval": "Abfrageintervall (Sekunden)",

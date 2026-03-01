@@ -164,12 +164,6 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not self._hosts:
                     errors["base"] = "no_hosts"
                 else:
-                    await self.async_set_unique_id(
-                        f"{self._base_config[CONF_BASE_URL]}::"
-                        f"{self._base_config[CONF_SITE]}::"
-                        f"{self._base_config[CONF_USERNAME]}"
-                    )
-                    self._abort_if_unique_id_configured()
                     return await self.async_step_select_host()
             except CheckmkApiError as err:
                 errors["base"] = _map_api_error(err)
@@ -360,6 +354,21 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _create_final_entry(self) -> FlowResult:
         data = dict(self._base_config)
         data[CONF_METRICS] = self._selected_metrics
+
+        # Build a unique_id that includes the selected metric IDs so that
+        # multiple config entries with different metrics on the same server
+        # are allowed.
+        metric_ids = sorted(m["id"] for m in self._selected_metrics)
+        unique = (
+            f"{self._base_config[CONF_BASE_URL]}::"
+            f"{self._base_config[CONF_SITE]}::"
+            f"{self._base_config[CONF_USERNAME]}::"
+            + ",".join(metric_ids)
+        )
+        # async_set_unique_id + _abort_if_unique_id_configured prevents
+        # adding the exact same metric selection twice.
+        self.async_set_unique_id(unique)
+
         return self.async_create_entry(
             title=self._base_config[CONF_NAME],
             data=data,

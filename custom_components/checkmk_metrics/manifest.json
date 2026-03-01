@@ -1,6 +1,6 @@
 {
   "domain": "checkmk_metrics",
-  "name": "Checkmk Metrics",
+  "name": "check_mk Metrics",
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://docs.checkmk.com/latest/en/rest_api.html",

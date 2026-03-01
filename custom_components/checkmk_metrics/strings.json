@@ -3,40 +3,64 @@
     "step": {
       "user": {
         "title": "Checkmk Metrics",
-        "description": "Configure access to Checkmk and define metrics.\n\nMetric format per line:\nhost;service;metric;name(optional);unit(optional)",
+        "description": "Verbinde dich mit deiner Checkmk API.",
         "data": {
           "name": "Name",
-          "base_url": "Base URL (e.g. https://monitoring.example.com)",
+          "base_url": "Base URL (z.B. https://monitoring.example.com)",
           "site": "Site ID",
-          "username": "Automation username",
-          "password": "Automation secret",
-          "verify_ssl": "Verify SSL certificate",
-          "scan_interval": "Scan interval (seconds)",
-          "metrics": "Metrics"
+          "username": "Automation User",
+          "password": "Automation Secret",
+          "verify_ssl": "SSL Zertifikat prüfen",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        }
+      },
+      "select_host": {
+        "title": "Host auswählen",
+        "description": "Wähle einen Host. Bereits ausgewählte Metriken: {selected_count}",
+        "data": {
+          "host": "Host"
+        }
+      },
+      "select_service": {
+        "title": "Service auswählen",
+        "description": "Wähle einen Service für Host: {host}",
+        "data": {
+          "service": "Service"
+        }
+      },
+      "select_metrics": {
+        "title": "Metriken auswählen",
+        "description": "Host: {host}\nService: {service}\nGefundene Metriken: {discovered}\nBereits gewählt: {selected_count}\n\nDu kannst zusätzlich manuell Metriken als CSV eintragen.",
+        "data": {
+          "metric_choices": "Gefundene Metriken",
+          "metrics_manual": "Zusätzliche Metriken (CSV)",
+          "add_more": "Weitere Host/Service-Kombination hinzufügen"
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to Checkmk API",
-      "invalid_metrics": "Invalid metric definition format",
-      "unknown": "Unknown error"
+      "cannot_connect": "Verbindung zur Checkmk API fehlgeschlagen",
+      "no_hosts": "Keine Hosts gefunden",
+      "no_services": "Für diesen Host wurden keine Services gefunden",
+      "no_metrics_selected": "Bitte mindestens eine Metrik auswählen oder eintragen",
+      "unknown": "Unbekannter Fehler"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Checkmk Metrics options",
-        "description": "Adjust interval and metric list",
+        "title": "Checkmk Metrics Optionen",
+        "description": "Intervall und Metrik-Liste anpassen (Textformat)",
         "data": {
-          "scan_interval": "Scan interval (seconds)",
-          "verify_ssl": "Verify SSL certificate",
-          "metrics": "Metrics"
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "verify_ssl": "SSL Zertifikat prüfen",
+          "metrics": "Metriken"
         }
       }
     },
     "error": {
-      "invalid_metrics": "Invalid metric definition format",
-      "unknown": "Unknown error"
+      "invalid_metrics": "Ungültiges Metrik-Format",
+      "unknown": "Unbekannter Fehler"
     }
   }
 }

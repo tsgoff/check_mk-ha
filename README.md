@@ -9,21 +9,15 @@ Custom Home Assistant integration to pull selected Checkmk metrics as sensor ent
 3. Go to **Settings -> Devices & Services -> Add Integration**.
 4. Search for **Checkmk Metrics**.
 
-## Setup format for metrics
+## Advanced setup flow
 
-In the config form, define one metric per line:
+The integration now uses a guided wizard:
 
-```text
-host;service;metric;name(optional);unit(optional)
-```
-
-Example:
-
-```text
-web01;CPU load;load15;CPU Load; 
-web01;Memory;mem_used;Memory Used;MiB
-db01;Filesystem /;fs_used;Root FS Used;GiB
-```
+1. Enter API connection settings.
+2. Select a host from Checkmk.
+3. Select a service from the selected host.
+4. Select one or more discovered metrics (or add manual metric names).
+5. Optionally add more host/service combinations.
 
 ## Notes
 
@@ -31,4 +25,4 @@ db01;Filesystem /;fs_used;Root FS Used;GiB
 - API target:
   - If `base_url` already ends with `/check_mk/api/1.0`, it is used directly.
   - Otherwise the integration builds: `<base_url>/<site>/check_mk/api/1.0`.
-- If a metric endpoint response differs between Checkmk versions, the integration tries multiple payload formats and parses common response shapes.
+- Metric discovery uses multiple endpoint/response fallbacks because Checkmk payload shape differs across versions.

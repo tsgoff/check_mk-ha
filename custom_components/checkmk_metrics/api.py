@@ -4,11 +4,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import quote
 
 from aiohttp import ClientError, ClientSession
+
+_LOGGER = logging.getLogger(__name__)
+
+# Columns to request from the monitoring services endpoint so that
+# perf_data and plugin_output are always included in the response.
+_SERVICE_COLUMNS = [
+    "host_name",
+    "description",
+    "state",
+    "plugin_output",
+    "perf_data",
+    "long_plugin_output",
+    "metrics",
+]
 
 
 class CheckmkApiError(Exception):
@@ -173,9 +188,11 @@ class CheckmkApiClient:
                                 {"op": "=", "left": "host_name", "right": host},
                                 {"op": "=", "left": "description", "right": service},
                             ],
-                        }
+                        },
+                        "columns": _SERVICE_COLUMNS,
                     },
                 )
+                _LOGGER.debug("list_metrics collection response: %s", data)
                 candidates.extend(self._extract_metric_names(data))
             except CheckmkApiError:
                 pass
@@ -191,7 +208,15 @@ class CheckmkApiClient:
         """Fetch a single metric by trying a few payload variants."""
         if metric == "__service_value__":
             snapshot = await self._get_service_snapshot(host, service)
-            parsed = self._extract_first_numeric(snapshot)
+            # Unwrap collection structure to get flat service data dict.
+            unwrapped = self._unwrap_service_data(snapshot)
+            _LOGGER.debug(
+                "fetch_metric __service_value__ unwrapped=%s snapshot_type=%s",
+                unwrapped,
+                type(snapshot).__name__,
+            )
+            target = unwrapped if unwrapped is not None else snapshot
+            parsed = self._extract_first_numeric(target)
             if parsed is not None:
                 return parsed
             raise CheckmkApiError(
@@ -228,9 +253,12 @@ class CheckmkApiClient:
         # Fallback: extract metric from service status payload.
         try:
             snapshot = await self._get_service_snapshot(host, service)
-            parsed = self._parse_metric_response(snapshot, metric)
-            if parsed is not None:
-                return parsed
+            # Try the unwrapped extensions dict first, then the raw snapshot.
+            unwrapped = self._unwrap_service_data(snapshot)
+            for target in (t for t in (unwrapped, snapshot) if t is not None):
+                parsed = self._parse_metric_response(target, metric)
+                if parsed is not None:
+                    return parsed
             last_error = CheckmkApiError(
                 f"Metric '{metric}' not found in service snapshot for {host}/{service}."
             )
@@ -257,7 +285,7 @@ class CheckmkApiClient:
             except CheckmkApiError:
                 continue
 
-        return await self._request(
+        data = await self._request(
             "POST",
             "/domain-types/service/collections/all",
             json_payload={
@@ -267,9 +295,51 @@ class CheckmkApiClient:
                         {"op": "=", "left": "host_name", "right": host},
                         {"op": "=", "left": "description", "right": service},
                     ],
-                }
+                },
+                "columns": _SERVICE_COLUMNS,
             },
         )
+        _LOGGER.debug("_get_service_snapshot collection response: %s", data)
+        return data
+
+    @staticmethod
+    def _unwrap_service_data(data: Any) -> dict[str, Any] | None:
+        """Extract the first service extensions dict from a collection response.
+
+        Checkmk REST API collection responses wrap the actual service data
+        inside  response -> value[0] -> extensions.  This helper unwraps that
+        so callers get the flat dict with perf_data, plugin_output, etc.
+        """
+        if not isinstance(data, dict):
+            return None
+
+        # Already a flat service dict (from show_service or similar).
+        for key in ("perf_data", "service_perf_data", "plugin_output", "service_plugin_output"):
+            if key in data:
+                return data
+
+        # Check extensions at top level.
+        extensions = data.get("extensions")
+        if isinstance(extensions, dict):
+            for key in ("perf_data", "service_perf_data", "plugin_output", "service_plugin_output"):
+                if key in extensions:
+                    return extensions
+
+        # Unwrap collection: value -> [item] -> extensions.
+        value = data.get("value")
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                item_ext = item.get("extensions")
+                if isinstance(item_ext, dict):
+                    return item_ext
+                # Some endpoints put data directly in the item.
+                for key in ("perf_data", "service_perf_data", "plugin_output", "service_plugin_output"):
+                    if key in item:
+                        return item
+
+        return None
 
     async def _request(
         self,
@@ -407,6 +477,10 @@ class CheckmkApiClient:
                 for item in value:
                     if isinstance(item, dict):
                         add_from_mapping(item)
+                        # Checkmk nests service data inside extensions.
+                        item_ext = item.get("extensions")
+                        if isinstance(item_ext, dict):
+                            add_from_mapping(item_ext)
 
         return sorted(names)
 
@@ -610,20 +684,47 @@ class CheckmkApiClient:
     def _extract_first_numeric(data: Any) -> MetricResult | None:
         """Best-effort fallback: return first numeric metric found in snapshot."""
         if isinstance(data, dict):
-            for key in (
-                "service_performance_data",
-                "performance_data",
-                "extensions",
-                "members",
-                "value",
-                "result",
-                "data",
-            ):
-                part = data.get(key)
-                result = CheckmkApiClient._extract_first_numeric(part)
-                if result is not None:
-                    return result
+            # 1) Prefer explicit performance maps.
+            for perf_key in ("service_performance_data", "performance_data"):
+                perf_map = data.get(perf_key)
+                if isinstance(perf_map, dict):
+                    for metric_value in perf_map.values():
+                        if isinstance(metric_value, (int, float)):
+                            return MetricResult(float(metric_value), None, {perf_key: perf_map})
+                        if isinstance(metric_value, dict):
+                            for key in ("value", "current", "last"):
+                                value = metric_value.get(key)
+                                if isinstance(value, (int, float)):
+                                    unit = (
+                                        metric_value.get("unit")
+                                        if isinstance(metric_value.get("unit"), str)
+                                        else None
+                                    )
+                                    return MetricResult(float(value), unit, {perf_key: metric_value})
 
+            # 2) Prefer explicit perf_data strings.
+            for perf_raw_key in ("service_perf_data", "perf_data"):
+                perf_raw = data.get(perf_raw_key)
+                if isinstance(perf_raw, str):
+                    for chunk in perf_raw.split():
+                        if "=" not in chunk:
+                            continue
+                        _, raw_value = chunk.split("=", 1)
+                        value_part = raw_value.split(";", 1)[0].strip()
+                        numeric = ""
+                        unit = ""
+                        for char in value_part:
+                            if char.isdigit() or char in ".-":
+                                numeric += char
+                            else:
+                                unit += char
+                        try:
+                            value = float(numeric)
+                        except ValueError:
+                            continue
+                        return MetricResult(value=value, unit=unit or None, raw={"perf_data": chunk})
+
+            # 3) Then plugin output lines like "Temperature: 49.9 °C".
             for output_key in ("service_plugin_output", "plugin_output"):
                 output = data.get(output_key)
                 if isinstance(output, str):
@@ -638,7 +739,29 @@ class CheckmkApiClient:
                         unit = match.group(2).strip() or None
                         return MetricResult(value=value, unit=unit, raw={"plugin_output": line})
 
-            for value in data.values():
+            # 4) Recursive fallback, but skip status-like numeric fields.
+            skip_numeric_keys = {
+                "state",
+                "service_state",
+                "host_state",
+                "state_type",
+                "service_state_type",
+                "host_state_type",
+                "hard_state",
+                "service_hard_state",
+                "host_hard_state",
+                "last_state",
+                "current_attempt",
+                "current_notification_number",
+                "is_service",
+                "is_pending",
+                "fixed",
+                "type",
+                "id",
+            }
+            for key, value in data.items():
+                if key in skip_numeric_keys and isinstance(value, (int, float)):
+                    continue
                 result = CheckmkApiClient._extract_first_numeric(value)
                 if result is not None:
                     return result

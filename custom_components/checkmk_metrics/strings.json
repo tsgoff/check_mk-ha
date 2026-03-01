@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Checkmk Metrics",
+        "description": "Configure access to Checkmk and define metrics.\n\nMetric format per line:\nhost;service;metric;name(optional);unit(optional)",
+        "data": {
+          "name": "Name",
+          "base_url": "Base URL (e.g. https://monitoring.example.com)",
+          "site": "Site ID",
+          "username": "Automation username",
+          "password": "Automation secret",
+          "verify_ssl": "Verify SSL certificate",
+          "scan_interval": "Scan interval (seconds)",
+          "metrics": "Metrics"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Checkmk API",
+      "invalid_metrics": "Invalid metric definition format",
+      "unknown": "Unknown error"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Checkmk Metrics options",
+        "description": "Adjust interval and metric list",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "verify_ssl": "Verify SSL certificate",
+          "metrics": "Metrics"
+        }
+      }
+    },
+    "error": {
+      "invalid_metrics": "Invalid metric definition format",
+      "unknown": "Unknown error"
+    }
+  }
+}

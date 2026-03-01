@@ -1,0 +1,11 @@
+{
+  "domain": "checkmk_metrics",
+  "name": "Checkmk Metrics",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://docs.checkmk.com/latest/en/rest_api.html",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

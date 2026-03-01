@@ -739,8 +739,9 @@ class CheckmkApiClient:
                         unit = match.group(2).strip() or None
                         return MetricResult(value=value, unit=unit, raw={"plugin_output": line})
 
-            # 4) Recursive fallback, but skip status-like numeric fields.
+            # 4) Recursive fallback, but skip status / timestamp / metadata fields.
             skip_numeric_keys = {
+                # Status fields
                 "state",
                 "service_state",
                 "host_state",
@@ -753,14 +754,80 @@ class CheckmkApiClient:
                 "last_state",
                 "current_attempt",
                 "current_notification_number",
+                "max_check_attempts",
                 "is_service",
                 "is_pending",
                 "fixed",
                 "type",
                 "id",
+                # Timestamp fields (Unix epoch — would show as ~1.7 billion)
+                "last_check",
+                "last_time_ok",
+                "last_time_warning",
+                "last_time_critical",
+                "last_time_unknown",
+                "last_state_change",
+                "last_hard_state_change",
+                "last_notification",
+                "next_check",
+                "next_notification",
+                "service_last_check",
+                "service_last_state_change",
+                "service_last_hard_state_change",
+                "service_next_check",
+                "host_last_check",
+                "host_last_state_change",
+                "last_update",
+                "cached_at",
+                "cache_interval",
+                "staleness",
+                # Other metadata
+                "check_interval",
+                "retry_interval",
+                "service_check_interval",
+                "service_retry_interval",
+                "notification_interval",
+                "notification_period",
+                "latency",
+                "execution_time",
+                "service_latency",
+                "service_execution_time",
+                "percent_state_change",
+                "service_percent_state_change",
+                "acknowledged",
+                "service_acknowledged",
+                "active_checks_enabled",
+                "accept_passive_checks",
+                "check_type",
+                "has_been_checked",
+                "should_be_scheduled",
+                "in_check_period",
+                "in_notification_period",
+                "scheduled_downtime_depth",
+                "service_scheduled_downtime_depth",
+                "notifications_enabled",
+                "host_scheduled_downtime_depth",
+                "host_acknowledged",
             }
+            # Also skip any key whose name contains common timestamp/metadata patterns.
+            _skip_patterns = ("_time", "_check", "_state", "_notification", "_interval")
             for key, value in data.items():
-                if key in skip_numeric_keys and isinstance(value, (int, float)):
+                if isinstance(value, (int, float)):
+                    if key in skip_numeric_keys:
+                        continue
+                    key_lower = key.lower()
+                    if any(p in key_lower for p in _skip_patterns):
+                        continue
+                    # Heuristic: Unix timestamps are > 1 billion; metric values almost never are.
+                    if abs(value) > 1_000_000_000:
+                        _LOGGER.debug(
+                            "_extract_first_numeric skipping likely timestamp %s=%s",
+                            key,
+                            value,
+                        )
+                        continue
+                # Skip string keys that clearly aren't perf data containers.
+                if isinstance(value, str):
                     continue
                 result = CheckmkApiClient._extract_first_numeric(value)
                 if result is not None:
@@ -773,6 +840,9 @@ class CheckmkApiClient:
                     return result
 
         if isinstance(data, (int, float)):
+            # Guard against bare timestamps bubbling up.
+            if abs(data) > 1_000_000_000:
+                return None
             return MetricResult(float(data), None, data)
 
         return None

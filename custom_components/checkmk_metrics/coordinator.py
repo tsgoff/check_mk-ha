@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import CheckmkApiClient, CheckmkApiError
 from .const import (
@@ -57,7 +57,6 @@ class CheckmkMetricsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         data: dict[str, dict[str, Any]] = {}
-        successful = 0
 
         for metric in self._metrics:
             metric_id = metric["id"]
@@ -70,15 +69,13 @@ class CheckmkMetricsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]
                     "unit": result.unit,
                     "raw": result.raw,
                 }
-                successful += 1
             except CheckmkApiError as err:
                 data[metric_id] = {
                     "error": str(err),
                 }
 
-        if successful == 0:
-            raise UpdateFailed("No configured metric could be fetched")
-
+        # Never fail hard here: entities should still be created and shown as unavailable.
+        # This makes debugging API payload/auth issues in Home Assistant much easier.
         return data
 
 

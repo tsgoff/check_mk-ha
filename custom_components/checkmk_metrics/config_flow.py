@@ -99,6 +99,17 @@ def _parse_manual_metric_list(raw: str) -> list[str]:
     return [v for v in values if v]
 
 
+def _map_api_error(err: CheckmkApiError) -> str:
+    msg = str(err).lower()
+    if "http 401" in msg or "http 403" in msg:
+        return "invalid_auth"
+    if "http 404" in msg:
+        return "invalid_url"
+    if "ssl" in msg or "certificate" in msg:
+        return "ssl_error"
+    return "cannot_connect"
+
+
 class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Checkmk Metrics."""
 
@@ -159,8 +170,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     self._abort_if_unique_id_configured()
                     return await self.async_step_select_host()
-            except CheckmkApiError:
-                errors["base"] = "cannot_connect"
+            except CheckmkApiError as err:
+                errors["base"] = _map_api_error(err)
             except Exception:
                 errors["base"] = "unknown"
 
@@ -195,8 +206,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "no_services"
                 else:
                     return await self.async_step_select_service()
-            except CheckmkApiError:
-                errors["base"] = "cannot_connect"
+            except CheckmkApiError as err:
+                errors["base"] = _map_api_error(err)
             except Exception:
                 errors["base"] = "unknown"
 
@@ -233,8 +244,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._current_host, self._current_service
                 )
                 return await self.async_step_select_metrics()
-            except CheckmkApiError:
-                errors["base"] = "cannot_connect"
+            except CheckmkApiError as err:
+                errors["base"] = _map_api_error(err)
             except Exception:
                 errors["base"] = "unknown"
 

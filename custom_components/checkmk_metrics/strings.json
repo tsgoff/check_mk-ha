@@ -40,6 +40,9 @@
     },
     "error": {
       "cannot_connect": "Verbindung zur Checkmk API fehlgeschlagen",
+      "invalid_auth": "Authentifizierung fehlgeschlagen (401/403). Bitte Automation-User und Automation-Secret prüfen",
+      "invalid_url": "API URL ungültig (404). Bitte Base URL und Site prüfen",
+      "ssl_error": "TLS/SSL Fehler. Testweise SSL-Prüfung deaktivieren",
       "no_hosts": "Keine Hosts gefunden",
       "no_services": "Für diesen Host wurden keine Services gefunden",
       "no_metrics_selected": "Bitte mindestens eine Metrik auswählen oder eintragen",

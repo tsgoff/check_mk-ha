@@ -57,9 +57,43 @@ class CheckmkApiClient:
 
     async def list_hosts(self) -> list[str]:
         """Return a sorted list of available hosts."""
-        data = await self._request("GET", "/domain-types/host_config/collections/all")
-        hosts = self._extract_names_from_collection(data, preferred=("name", "host_name"))
-        return sorted(set(hosts), key=str.casefold)
+        hosts: list[str] = []
+        last_error: CheckmkApiError | None = None
+
+        # Setup endpoint (requires configuration permissions)
+        try:
+            data = await self._request("GET", "/domain-types/host_config/collections/all")
+            hosts.extend(
+                self._extract_names_from_collection(
+                    data, preferred=("name", "host_name")
+                )
+            )
+        except CheckmkApiError as err:
+            last_error = err
+
+        # Monitoring endpoint fallback (works with read-only monitoring roles)
+        try:
+            data = await self._request(
+                "POST",
+                "/domain-types/host/collections/all",
+                json_payload={},
+            )
+            hosts.extend(
+                self._extract_names_from_collection(
+                    data, preferred=("name", "host_name")
+                )
+            )
+        except CheckmkApiError as err:
+            last_error = err
+
+        deduped = sorted(set(hosts), key=str.casefold)
+        if deduped:
+            return deduped
+
+        if last_error is not None:
+            raise last_error
+
+        return []
 
     async def list_services(self, host: str) -> list[str]:
         """Return a sorted list of services for a host."""
@@ -207,13 +241,19 @@ class CheckmkApiClient:
         preferred: tuple[str, ...],
     ) -> list[str]:
         out: list[str] = []
-        values = []
+        values: list[Any] = []
 
         if isinstance(data, dict):
             if isinstance(data.get("value"), list):
                 values = data["value"]
             elif isinstance(data.get("members"), list):
                 values = data["members"]
+            else:
+                # Fallback for uncommon collection wrappers.
+                for value in data.values():
+                    if isinstance(value, list):
+                        values = value
+                        break
 
         for item in values:
             if not isinstance(item, dict):
@@ -236,6 +276,8 @@ class CheckmkApiClient:
 
             if not found and isinstance(item.get("title"), str):
                 found = item["title"].strip()
+            if not found and isinstance(item.get("instanceId"), str):
+                found = item["instanceId"].strip()
 
             if found:
                 out.append(found)

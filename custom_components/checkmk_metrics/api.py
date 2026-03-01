@@ -159,6 +159,26 @@ class CheckmkApiClient:
             if candidates:
                 break
 
+        # Fallback via service collection query for monitoring-only roles/setups.
+        if not candidates:
+            try:
+                data = await self._request(
+                    "POST",
+                    "/domain-types/service/collections/all",
+                    json_payload={
+                        "query": {
+                            "op": "and",
+                            "expr": [
+                                {"op": "=", "left": "host_name", "right": host},
+                                {"op": "=", "left": "description", "right": service},
+                            ],
+                        }
+                    },
+                )
+                candidates.extend(self._extract_metric_names(data))
+            except CheckmkApiError:
+                pass
+
         return sorted(set(candidates), key=str.casefold)
 
     async def fetch_metric(
@@ -195,7 +215,51 @@ class CheckmkApiClient:
             except CheckmkApiError as err:
                 last_error = err
 
+        # Fallback: extract metric from service status payload.
+        try:
+            snapshot = await self._get_service_snapshot(host, service)
+            parsed = self._parse_metric_response(snapshot, metric)
+            if parsed is not None:
+                return parsed
+            last_error = CheckmkApiError(
+                f"Metric '{metric}' not found in service snapshot for {host}/{service}."
+            )
+        except CheckmkApiError as err:
+            last_error = err
+
         raise last_error or CheckmkApiError("Unknown metric lookup error")
+
+    async def _get_service_snapshot(self, host: str, service: str) -> Any:
+        """Get one service status payload for metric fallback parsing."""
+        encoded_host = quote(host, safe="")
+
+        for params in (
+            {"service_description": service},
+            {"service": service},
+            {},
+        ):
+            try:
+                return await self._request(
+                    "GET",
+                    f"/objects/host/{encoded_host}/actions/show_service/invoke",
+                    query_params=params,
+                )
+            except CheckmkApiError:
+                continue
+
+        return await self._request(
+            "POST",
+            "/domain-types/service/collections/all",
+            json_payload={
+                "query": {
+                    "op": "and",
+                    "expr": [
+                        {"op": "=", "left": "host_name", "right": host},
+                        {"op": "=", "left": "description", "right": service},
+                    ],
+                }
+            },
+        )
 
     async def _request(
         self,
@@ -356,6 +420,30 @@ class CheckmkApiClient:
             if metric_name in container and isinstance(container[metric_name], (int, float)):
                 return MetricResult(float(container[metric_name]), None, container)
 
+            perf_map = container.get("performance_data")
+            if isinstance(perf_map, dict) and metric_name in perf_map:
+                metric_value = perf_map.get(metric_name)
+                if isinstance(metric_value, (int, float)):
+                    return MetricResult(float(metric_value), None, container)
+                if isinstance(metric_value, dict):
+                    for key in ("value", "current", "last"):
+                        value = metric_value.get(key)
+                        if isinstance(value, (int, float)):
+                            unit = (
+                                metric_value.get("unit")
+                                if isinstance(metric_value.get("unit"), str)
+                                else None
+                            )
+                            return MetricResult(float(value), unit, metric_value)
+
+            perf_raw = container.get("perf_data")
+            if isinstance(perf_raw, str):
+                parsed = CheckmkApiClient._extract_from_perf_data_string(
+                    perf_raw, metric_name
+                )
+                if parsed is not None:
+                    return parsed
+
             for key in ("value", "metric_value", "current", "last"):
                 value = container.get(key)
                 if isinstance(value, (int, float)):
@@ -373,6 +461,10 @@ class CheckmkApiClient:
                 if not isinstance(item, dict):
                     continue
 
+                nested_result = CheckmkApiClient._extract_value(item, metric_name)
+                if nested_result is not None:
+                    return nested_result
+
                 name_candidates = [
                     item.get("name"),
                     item.get("metric"),
@@ -385,5 +477,36 @@ class CheckmkApiClient:
                         if isinstance(value, (int, float)):
                             unit = item.get("unit") if isinstance(item.get("unit"), str) else None
                             return MetricResult(float(value), unit, item)
+
+        return None
+
+    @staticmethod
+    def _extract_from_perf_data_string(
+        perf_data: str,
+        metric_name: str,
+    ) -> MetricResult | None:
+        """Parse perf_data like 'temp=48.1;80;90;0;100'."""
+        for chunk in perf_data.split():
+            if "=" not in chunk:
+                continue
+            name, raw_value = chunk.split("=", 1)
+            if name.strip() != metric_name:
+                continue
+
+            value_part = raw_value.split(";", 1)[0].strip()
+            numeric = ""
+            unit = ""
+            for char in value_part:
+                if char.isdigit() or char in ".-":
+                    numeric += char
+                else:
+                    unit += char
+
+            try:
+                value = float(numeric)
+            except ValueError:
+                return None
+
+            return MetricResult(value=value, unit=unit or None, raw={"perf_data": chunk})
 
         return None

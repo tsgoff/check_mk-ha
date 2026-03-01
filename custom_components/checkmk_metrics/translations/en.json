@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Checkmk Metrics",
+        "description": "Connect to your Checkmk API.",
+        "data": {
+          "name": "Name",
+          "base_url": "Base URL (e.g. https://monitoring.example.com)",
+          "site": "Site ID",
+          "username": "Automation user",
+          "password": "Automation secret",
+          "verify_ssl": "Verify SSL certificate",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      },
+      "select_host": {
+        "title": "Select host",
+        "description": "Pick a host. Metrics already selected: {selected_count}",
+        "data": {
+          "host": "Host"
+        }
+      },
+      "select_service": {
+        "title": "Select service",
+        "description": "Select a service for host: {host}",
+        "data": {
+          "service": "Service"
+        }
+      },
+      "select_metrics": {
+        "title": "Select metrics",
+        "description": "Host: {host}\nService: {service}\nDiscovered metrics: {discovered}\nAlready selected: {selected_count}\n\nYou can also enter metric names manually as CSV.",
+        "data": {
+          "metric_choices": "Discovered metrics",
+          "metrics_manual": "Additional metrics (CSV)",
+          "add_more": "Add another host/service"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Checkmk API",
+      "invalid_auth": "Authentication failed (401/403). Check automation user/secret",
+      "invalid_url": "API URL not found (404). Check base URL and site",
+      "ssl_error": "TLS/SSL error. Try disabling SSL verification for testing",
+      "no_hosts": "No hosts found",
+      "no_services": "No services found for this host",
+      "no_metrics_selected": "Please select at least one metric or enter one manually",
+      "unknown": "Unknown error"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Checkmk Metrics options",
+        "description": "Adjust interval and metric list (text format)",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "verify_ssl": "Verify SSL certificate",
+          "metrics": "Metrics"
+        }
+      }
+    },
+    "error": {
+      "invalid_metrics": "Invalid metric format",
+      "unknown": "Unknown error"
+    }
+  }
+}

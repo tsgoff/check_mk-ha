@@ -9,7 +9,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers import selector
 
 from .api import CheckmkApiClient, CheckmkApiError
@@ -172,6 +172,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_select_host()
             except CheckmkApiError as err:
                 errors["base"] = _map_api_error(err)
+            except AbortFlow:
+                raise
             except Exception:
                 errors["base"] = "unknown"
 
@@ -208,6 +210,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return await self.async_step_select_service()
             except CheckmkApiError as err:
                 errors["base"] = _map_api_error(err)
+            except AbortFlow:
+                raise
             except Exception:
                 errors["base"] = "unknown"
 
@@ -246,6 +250,8 @@ class CheckmkMetricsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_select_metrics()
             except CheckmkApiError as err:
                 errors["base"] = _map_api_error(err)
+            except AbortFlow:
+                raise
             except Exception:
                 errors["base"] = "unknown"
 

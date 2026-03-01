@@ -206,75 +206,116 @@ class CheckmkApiClient:
         metric: str,
     ) -> MetricResult:
         """Fetch a single metric by trying a few payload variants."""
-        if metric == "__service_value__":
-            snapshot = await self._get_service_snapshot(host, service)
-            # Unwrap collection structure to get flat service data dict.
-            unwrapped = self._unwrap_service_data(snapshot)
-            _LOGGER.debug(
-                "fetch_metric __service_value__ unwrapped=%s snapshot_type=%s",
-                unwrapped,
-                type(snapshot).__name__,
-            )
-            target = unwrapped if unwrapped is not None else snapshot
-            parsed = self._extract_first_numeric(target)
-            if parsed is not None:
-                return parsed
-            raise CheckmkApiError(
-                f"No numeric service value found for {host}/{service}."
-            )
 
-        payload_variants = [
-            {
-                "host_name": host,
-                "service_description": service,
-                "metric_name": metric,
-            },
-            {"host": host, "service": service, "metric": metric},
-            {"host": host, "service_description": service, "metric_name": metric},
-        ]
-
-        last_error: CheckmkApiError | None = None
-        for payload in payload_variants:
-            try:
-                data = await self._request(
-                    "POST",
-                    "/domain-types/metric/actions/get/invoke",
-                    json_payload=payload,
-                )
-                parsed = self._parse_metric_response(data, metric)
-                if parsed is not None:
-                    return parsed
-                last_error = CheckmkApiError(
-                    f"Metric response had no numeric value for '{metric}'."
-                )
-            except CheckmkApiError as err:
-                last_error = err
-
-        # Fallback: extract metric from service status payload.
+        # ---- Primary path: service collection with explicit columns ----
+        # This works on all Checkmk editions (including CRE) and always
+        # returns perf_data + plugin_output when columns are requested.
         try:
             snapshot = await self._get_service_snapshot(host, service)
-            # Try the unwrapped extensions dict first, then the raw snapshot.
             unwrapped = self._unwrap_service_data(snapshot)
-            for target in (t for t in (unwrapped, snapshot) if t is not None):
+            _LOGGER.debug(
+                "fetch_metric primary snapshot unwrapped=%s",
+                unwrapped,
+            )
+            target = unwrapped if unwrapped is not None else snapshot
+
+            if metric == "__service_value__":
+                parsed = self._extract_first_numeric(target)
+                if parsed is not None:
+                    return parsed
+            else:
                 parsed = self._parse_metric_response(target, metric)
                 if parsed is not None:
                     return parsed
-            last_error = CheckmkApiError(
-                f"Metric '{metric}' not found in service snapshot for {host}/{service}."
-            )
         except CheckmkApiError as err:
-            last_error = err
+            _LOGGER.debug("fetch_metric primary path failed: %s", err)
 
-        raise last_error or CheckmkApiError("Unknown metric lookup error")
+        # ---- Fallback: dedicated metric endpoint (Enterprise editions) ----
+        if metric != "__service_value__":
+            payload_variants = [
+                {
+                    "host_name": host,
+                    "service_description": service,
+                    "metric_name": metric,
+                },
+                {"host": host, "service": service, "metric": metric},
+                {"host": host, "service_description": service, "metric_name": metric},
+            ]
 
-    async def _get_service_snapshot(self, host: str, service: str) -> Any:
-        """Get one service status payload for metric fallback parsing."""
+            for payload in payload_variants:
+                try:
+                    data = await self._request(
+                        "POST",
+                        "/domain-types/metric/actions/get/invoke",
+                        json_payload=payload,
+                    )
+                    parsed = self._parse_metric_response(data, metric)
+                    if parsed is not None:
+                        return parsed
+                except CheckmkApiError:
+                    continue
+
+        # ---- Fallback: show_service endpoint ----
         encoded_host = quote(host, safe="")
-
         for params in (
             {"service_description": service},
             {"service": service},
-            {},
+        ):
+            try:
+                data = await self._request(
+                    "GET",
+                    f"/objects/host/{encoded_host}/actions/show_service/invoke",
+                    query_params=params,
+                )
+                unwrapped = self._unwrap_service_data(data)
+                target = unwrapped if unwrapped is not None else data
+                if metric == "__service_value__":
+                    parsed = self._extract_first_numeric(target)
+                else:
+                    parsed = self._parse_metric_response(target, metric)
+                if parsed is not None:
+                    return parsed
+            except CheckmkApiError:
+                continue
+
+        raise CheckmkApiError(
+            f"Could not fetch metric '{metric}' for {host}/{service}. "
+            "The service collection returned no usable perf_data or plugin_output."
+        )
+
+    async def _get_service_snapshot(self, host: str, service: str) -> Any:
+        """Get one service status payload with perf_data and plugin_output.
+
+        Primary path: service collection with explicit columns — this works
+        on all Checkmk editions and always includes perf_data.
+        Fallback: show_service endpoint (may not include perf_data on CRE).
+        """
+        # Primary: collection with columns (reliable on CRE + CEE).
+        try:
+            data = await self._request(
+                "POST",
+                "/domain-types/service/collections/all",
+                json_payload={
+                    "query": {
+                        "op": "and",
+                        "expr": [
+                            {"op": "=", "left": "host_name", "right": host},
+                            {"op": "=", "left": "description", "right": service},
+                        ],
+                    },
+                    "columns": _SERVICE_COLUMNS,
+                },
+            )
+            _LOGGER.debug("_get_service_snapshot collection response: %s", data)
+            return data
+        except CheckmkApiError as err:
+            _LOGGER.debug("_get_service_snapshot collection failed: %s", err)
+
+        # Fallback: show_service endpoint.
+        encoded_host = quote(host, safe="")
+        for params in (
+            {"service_description": service},
+            {"service": service},
         ):
             try:
                 return await self._request(
@@ -285,22 +326,9 @@ class CheckmkApiClient:
             except CheckmkApiError:
                 continue
 
-        data = await self._request(
-            "POST",
-            "/domain-types/service/collections/all",
-            json_payload={
-                "query": {
-                    "op": "and",
-                    "expr": [
-                        {"op": "=", "left": "host_name", "right": host},
-                        {"op": "=", "left": "description", "right": service},
-                    ],
-                },
-                "columns": _SERVICE_COLUMNS,
-            },
+        raise CheckmkApiError(
+            f"Could not retrieve service snapshot for {host}/{service}"
         )
-        _LOGGER.debug("_get_service_snapshot collection response: %s", data)
-        return data
 
     @staticmethod
     def _unwrap_service_data(data: Any) -> dict[str, Any] | None:
